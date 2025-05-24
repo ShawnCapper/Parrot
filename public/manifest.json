@@ -1,0 +1,28 @@
+{
+  "name": "AI Transcription Parrot",
+  "short_name": "ParrotAI",
+  "description": "AI powered audio transcription using OpenAI GPT-4o.",
+  "icons": [
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/maskable-icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#18181b", 
+  "theme_color": "#3f3f46", 
+  "orientation": "portrait-primary"
+}
