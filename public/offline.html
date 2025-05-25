@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline - Parrot</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: linear-gradient(to bottom, #18181b, #000000);
+            color: #ffffff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+            text-align: center;
+        }
+        .container {
+            max-width: 500px;
+            padding: 30px;
+            background-color: rgba(24, 24, 27, 0.6);
+            border: 1px solid #3f3f46;
+            border-radius: 12px;
+            backdrop-filter: blur(10px);
+        }
+        h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+        p {
+            color: #a1a1aa;
+            line-height: 1.6;
+            margin-bottom: 20px;
+        }
+        .button {
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .button:hover {
+            background-color: #4338ca;
+        }
+        .icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">📡</div>
+        <h1>You're Offline</h1>
+        <p>It seems you're not connected to the internet. Parrot needs an internet connection to transcribe audio files with AI.</p>
+        <p>Please check your connection and try again.</p>
+        <button class="button" onclick="window.location.reload()">Try Again</button>
+    </div>
+</body>
+</html>

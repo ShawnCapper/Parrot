@@ -8,7 +8,25 @@ export default {
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
   ],
   theme: {
+    screens: {
+      'sm': '640px',
+      'md': '768px',
+      'lg': '1024px',
+      'xl': '1264px',
+      '2xl': '1536px',
+    },
   	extend: {
+      keyframes: {
+        "fade-in-out": {
+          "0%": { opacity: "0" },
+          "10%": { opacity: "1" },
+          "80%": { opacity: "1" },
+          "100%": { opacity: "0" },
+        },
+      },
+      animation: {
+        "fade-in-out": "fade-in-out 3s ease-in-out forwards",
+      },
   		colors: {
   			background: 'hsl(var(--background))',
   			foreground: 'hsl(var(--foreground))',
