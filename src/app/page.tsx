@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { InstallPWA } from "@/components/install-pwa";
 import { useState, useEffect } from "react";
 import { Upload, Wand2, Copy, CheckCheck, FileAudio, Download, Mic, Volume2 } from "lucide-react";
+import { formatTime, formatCost, estimateTokensFromDuration, estimateTokensFromFileSize } from "@/lib/tokenEstimator";
 
 export default function Home() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -25,8 +26,13 @@ export default function Home() {
   const [selectedModel, setSelectedModel] = useState<string>("gpt-4o-mini");
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [mode, setMode] = useState<"speech-to-text" | "text-to-speech">("speech-to-text");
-  const [prefsLoaded, setPrefsLoaded] = useState<boolean>(false);
-
+  const [prefsLoaded, setPrefsLoaded] = useState<boolean>(false);  const [tokenEstimate, setTokenEstimate] = useState<{
+    durationSeconds: number;
+    estimatedTokens: number;
+    estimatedCost: number;
+    model: string;
+  } | null>(null);
+  const [isTokenEstimateExpanded, setIsTokenEstimateExpanded] = useState<boolean>(false);
   // Load saved preferences on component mount
   useEffect(() => {
     // Load saved model preference
@@ -42,6 +48,33 @@ export default function Home() {
       setMode(savedMode);
       setPrefsLoaded(true);
     }
+    
+    // Load token estimate expansion preference
+    const savedTokenEstimateExpanded = localStorage.getItem("parrot-token-estimate-expanded");
+    if (savedTokenEstimateExpanded) {
+      setIsTokenEstimateExpanded(savedTokenEstimateExpanded === "true");
+    }
+
+    // Load saved transcription
+    const savedTranscription = localStorage.getItem("parrot-transcription");
+    if (savedTranscription) {
+      setTranscription(savedTranscription);
+      
+      // Calculate tokens for the saved transcription
+      import('@/lib/tokenCalc').then(({ countTokens }) => {
+        // Use a default model if none is saved yet
+        const modelToUse = savedModel || "gpt-4o-mini";
+        const tokens = countTokens(savedTranscription, modelToUse);
+        
+        // Set a basic token estimate for the saved transcription
+        setTokenEstimate({
+          durationSeconds: Math.round(savedTranscription.length / 5), // Rough estimate of duration
+          estimatedTokens: tokens,
+          estimatedCost: tokens * (modelToUse === "whisper-1" ? 0.0001 : 0.00001), // Very rough cost estimate
+          model: modelToUse
+        });
+      });
+    }
 
     // Hide the preferences loaded notification after 3 seconds
     if (savedModel || (savedMode === "speech-to-text" || savedMode === "text-to-speech")) {
@@ -53,19 +86,24 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("parrot-selected-model", selectedModel);
   }, [selectedModel]);
-  
-  // Save mode preference when it changes
+    // Save mode preference when it changes
   useEffect(() => {
     localStorage.setItem("parrot-mode", mode);
   }, [mode]);
+  
+  // Save token estimate expansion preference when it changes
+  useEffect(() => {
+    localStorage.setItem("parrot-token-estimate-expanded", isTokenEstimateExpanded.toString());
+  }, [isTokenEstimateExpanded]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     handleFile(file);
   };
 
-  const handleFile = (file?: File) => {
+  const handleFile = async (file?: File) => {
     setError("");
+    setTokenEstimate(null); // Reset token estimate
     
     if (file) {
       // Check if the file is a supported audio format
@@ -85,6 +123,59 @@ export default function Home() {
       }
       
       setAudioFile(file);
+      
+      // Estimate tokens from the audio file
+      try {
+        // Try to get audio duration with Audio API
+        const audio = new Audio();
+        const objectUrl = URL.createObjectURL(file);
+        
+        audio.addEventListener('loadedmetadata', () => {
+          URL.revokeObjectURL(objectUrl);
+          const durationSeconds = audio.duration;
+          
+          // Get token estimate based on duration
+          const { estimatedTokens, estimatedCost, estimatedWords } = 
+            estimateTokensFromDuration(durationSeconds, selectedModel);
+          
+          setTokenEstimate({
+            durationSeconds,
+            estimatedTokens,
+            estimatedCost,
+            model: selectedModel
+          });
+        });
+        
+        audio.addEventListener('error', () => {
+          URL.revokeObjectURL(objectUrl);
+          console.log("Failed to get audio duration, using file size instead");
+          
+          // Fallback to file size estimation
+          const { estimatedTokens, estimatedCost, estimatedMinutes } = 
+            estimateTokensFromFileSize(file.size, selectedModel);
+          
+          setTokenEstimate({
+            durationSeconds: estimatedMinutes * 60,
+            estimatedTokens,
+            estimatedCost,
+            model: selectedModel
+          });
+        });
+        
+        audio.src = objectUrl;
+      } catch (err) {
+        console.error("Error estimating tokens:", err);
+        // Fallback to file size estimation
+        const { estimatedTokens, estimatedCost, estimatedMinutes } = 
+          estimateTokensFromFileSize(file.size, selectedModel);
+        
+        setTokenEstimate({
+          durationSeconds: estimatedMinutes * 60,
+          estimatedTokens,
+          estimatedCost,
+          model: selectedModel
+        });
+      }
     }
   };
 
@@ -122,7 +213,7 @@ export default function Home() {
     }
 
     setIsLoading(true);
-    setTranscription(""); // Clear previous transcription
+    // Don't clear the existing transcription until we successfully get a new one
     setError("");
     setSuccessMessage("");
 
@@ -134,6 +225,12 @@ export default function Home() {
       formData.append("model", selectedModel);
 
       console.log(`Sending request to transcribe ${audioFile.name} using ${selectedModel}`);
+      
+      // Now clear the transcription since we're about to process a new one
+      // Only clear it right before we send the new request
+      setTranscription(""); 
+      localStorage.removeItem("parrot-transcription");
+      
       const response = await fetch("/api/transcribe", {
         method: "POST",
         body: formData,
@@ -182,6 +279,24 @@ export default function Home() {
       const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
       
       setTranscription(result.transcription);
+      
+      // Save transcription to localStorage
+      localStorage.setItem("parrot-transcription", result.transcription);
+      
+      // Calculate actual tokens from the transcription
+      import('@/lib/tokenCalc').then(({ countTokens }) => {
+        const actualTokens = countTokens(result.transcription, selectedModel);
+        
+        // Update token estimates with real data
+        if (tokenEstimate) {
+          setTokenEstimate({
+            ...tokenEstimate,
+            estimatedTokens: actualTokens,
+            estimatedCost: tokenEstimate.estimatedCost // Keep the original cost estimate
+          });
+        }
+      });
+      
       setSuccessMessage(`Transcription completed in ${processingTime}s`);
     } catch (error) {
       console.error("Error transcribing audio:", error);
@@ -212,6 +327,30 @@ export default function Home() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // Estimate tokens when the selected model changes
+  useEffect(() => {
+    if (audioFile && tokenEstimate) {
+      // Recalculate token estimate when model changes
+      // We only need to update if the model changed (not when audioFile changes since that's handled in handleFile)
+      if (tokenEstimate.model !== selectedModel) {
+        try {
+          // Use the already determined duration
+          const { durationSeconds } = tokenEstimate;
+          const { estimatedTokens, estimatedCost } = estimateTokensFromDuration(durationSeconds, selectedModel);
+          
+          setTokenEstimate({
+            durationSeconds,
+            estimatedTokens,
+            estimatedCost,
+            model: selectedModel
+          });
+        } catch (err) {
+          console.error("Error updating token estimate for new model:", err);
+        }
+      }
+    }
+  }, [selectedModel, tokenEstimate, audioFile]);
 
   return (
     <div className="flex flex-col min-h-screen bg-gradient-to-b from-zinc-900 to-black text-white">
@@ -247,11 +386,7 @@ export default function Home() {
               }`}
             >
               <Mic className="w-4 h-4" />
-              <span className={
-                mode === "speech-to-text"
-                  ? "hidden lg:inline"
-                  : "hidden"
-              }>Speech-to-Text</span>
+              <span>Speech-to-Text</span>
             </button>
             <button
               onClick={() => setMode("text-to-speech")}
@@ -262,11 +397,7 @@ export default function Home() {
               }`}
             >
               <Volume2 className="w-4 h-4" />
-              <span className={
-                mode === "text-to-speech"
-                  ? "hidden lg:inline"
-                  : "hidden"
-              }>Text-to-Speech</span>
+              <span>Text-to-Speech</span>
             </button>
           </div>
         </div>
@@ -330,6 +461,61 @@ export default function Home() {
                   </div>
                 )}
               </label>
+                {/* Token estimation display */}
+              {tokenEstimate && (
+                <div className="px-4 py-3 bg-zinc-800/50 border border-zinc-700 rounded-md">
+                  <button 
+                    onClick={() => setIsTokenEstimateExpanded(!isTokenEstimateExpanded)}
+                    className="w-full text-left"
+                  >
+                    <div className="text-sm font-medium text-indigo-300 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                          <path d="M2 17l10 5 10-5"></path>
+                          <path d="M2 12l10 5 10-5"></path>
+                        </svg>
+                        <span>Token Estimation</span>
+                      </div>
+                      <div className="text-xs text-zinc-400">
+                        {!isTokenEstimateExpanded ? (
+                          <div className="flex items-center">
+                            <span className="mr-2">{tokenEstimate.estimatedTokens.toLocaleString()} tokens (${tokenEstimate.estimatedCost.toFixed(4)})</span>
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+                              <polyline points="6 9 12 15 18 9"></polyline>
+                            </svg>
+                          </div>
+                        ) : (
+                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-3 h-3">
+                            <polyline points="18 15 12 9 6 15"></polyline>
+                          </svg>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                  
+                  {isTokenEstimateExpanded && (
+                    <div className="grid grid-cols-2 gap-3 text-xs mt-3 pt-3 border-t border-zinc-700/50">
+                      <div>
+                        <div className="text-zinc-400">Audio Duration</div>
+                        <div className="text-zinc-200">{Math.round(tokenEstimate.durationSeconds)} seconds</div>
+                      </div>
+                      <div>
+                        <div className="text-zinc-400">Est. Tokens</div>
+                        <div className="text-zinc-200">{tokenEstimate.estimatedTokens.toLocaleString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-zinc-400">Est. Cost</div>
+                        <div className="text-zinc-200">${tokenEstimate.estimatedCost.toFixed(4)}</div>
+                      </div>
+                      <div>
+                        <div className="text-zinc-400">Model</div>
+                        <div className="text-zinc-200">{selectedModel}</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               
               {error && (
                 <div className="px-4 py-3 bg-red-900/30 border border-red-800 rounded-md text-sm text-red-200">
@@ -384,7 +570,7 @@ export default function Home() {
                       {/* Content */}
                       <div className="relative space-y-3">
                         <div className="flex justify-between items-center">
-                          <h3 className="font-medium text-white whitespace-nowrap">Whisper 2</h3>
+                          <h3 className="font-medium text-white whitespace-nowrap">Whisper v2</h3>
                           {selectedModel === "whisper-1" && (
                             <div className="bg-indigo-500/20 border border-indigo-500/50 text-indigo-300 text-[10px] px-1.5 py-0.5 ml-1.5 rounded-full whitespace-nowrap">Selected</div>
                           )}
@@ -524,13 +710,36 @@ export default function Home() {
         <div className="w-full xl:w-1/2 space-y-6">
           <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl h-full">
             <CardHeader className="border-b border-zinc-800">
-              <CardTitle className="text-2xl font-bold text-white">
+              <CardTitle className="text-2xl font-bold text-white flex items-center gap-2">
                 Transcription Results
+                {transcription && localStorage.getItem("parrot-transcription") === transcription && (
+                  <div className="text-xs px-2 py-0.5 bg-indigo-500/20 border border-indigo-500/30 rounded-full text-indigo-300 font-normal">
+                    Saved
+                  </div>
+                )}
               </CardTitle>
               <CardDescription className="text-zinc-400">
-                {transcription ? 
-                  `${transcription.split(' ').length} words, ${transcription.length} characters` : 
-                  "Your transcribed text will appear here"}
+                {transcription ? (
+                  <div className="flex flex-col space-y-1">
+                    <div>
+                      {`${transcription.split(' ').length} words, ${transcription.length} characters`}
+                    </div>
+                    {tokenEstimate && (
+                      <div className="text-xs flex items-center gap-2 mt-1 text-indigo-300">
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
+                          <path d="M2 17l10 5 10-5"></path>
+                          <path d="M2 12l10 5 10-5"></path>
+                        </svg>
+                        <span>
+                          {`${tokenEstimate.estimatedTokens.toLocaleString()} tokens (est. $${tokenEstimate.estimatedCost.toFixed(4)})`}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  "Your transcribed text will appear here"
+                )}
               </CardDescription>
               {successMessage && !error && !isLoading && (
                 <div className="mt-3 px-4 py-2 bg-green-900/30 border border-green-800 rounded-md text-sm text-green-200 flex items-center">
@@ -557,7 +766,26 @@ export default function Home() {
               )}
             </CardContent>
             {transcription && (
-              <CardFooter className="flex justify-end border-t border-zinc-800 p-4">
+              <CardFooter className="flex justify-between border-t border-zinc-800 p-4">
+                <Button
+                  onClick={() => {
+                    setTranscription("");
+                    localStorage.removeItem("parrot-transcription");
+                    setTokenEstimate(null);
+                  }}
+                  variant="outline"
+                  className="border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-2"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 6h18"></path>
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                    <line x1="10" y1="11" x2="10" y2="17"></line>
+                    <line x1="14" y1="11" x2="14" y2="17"></line>
+                  </svg>
+                  Clear
+                </Button>
+                
                 <div className="flex gap-2">
                   <Button
                     onClick={handleCopyToClipboard}

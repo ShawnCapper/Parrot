@@ -6,6 +6,16 @@ const withPWA = require('next-pwa');
 const config: NextConfig = {
   trailingSlash: true,
   serverExternalPackages: ['openai'],
+  // Enable WebAssembly support
+  webpack: (config) => {
+    // Enable WebAssembly support
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+    };
+    
+    return config;
+  },
 };
 
 // Apply PWA configuration
