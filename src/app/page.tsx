@@ -75,44 +75,86 @@ export default function Home() {
     const seconds = Math.floor(time % 60);
     return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
-
   const setupAudioContext = () => {
-    if (!audioRef.current) return;
+    if (!audioRef.current) {
+      console.warn('Cannot setup audio context: audioRef.current is null');
+      return;
+    }
     
     try {
+      console.log('Setting up audio context...');
+      
       // Create audio context
       const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext();
+        console.log('Created new AudioContext');
+      } else {
+        console.log('Using existing AudioContext');
+        // Resume the context if it's suspended
+        if (audioContextRef.current.state === 'suspended') {
+          audioContextRef.current.resume().then(() => {
+            console.log('Resumed audio context');
+          });
+        }
       }
       
       // Create analyzer node
       if (!analyzerRef.current) {
         analyzerRef.current = audioContextRef.current.createAnalyser();
         analyzerRef.current.fftSize = 128; // Power of 2, controls the frequency resolution
+        console.log('Created new AnalyserNode');
       }
       
-      // Connect audio element to the analyzer
-      const source = audioContextRef.current.createMediaElementSource(audioRef.current);
-      source.connect(analyzerRef.current);
-      analyzerRef.current.connect(audioContextRef.current.destination);
-      
-      // Start the visualization
-      startVisualization();
+      try {
+        // Connect audio element to the analyzer
+        const source = audioContextRef.current.createMediaElementSource(audioRef.current);
+        source.connect(analyzerRef.current);
+        analyzerRef.current.connect(audioContextRef.current.destination);
+        console.log('Connected audio source to analyzer and destination');
+        
+        // Start the visualization
+        console.log('Starting visualization...');
+        startVisualization();
+      } catch (mediaError) {
+        // This could happen if the audio element is already connected
+        console.warn('Error connecting audio element, might be already connected:', mediaError);
+        
+        // We can still try to start visualization even if connection failed
+        console.log('Attempting to start visualization anyway...');
+        startVisualization();
+      }
     } catch (err) {
       console.error("Error setting up audio context:", err);
     }
   };
-
   const startVisualization = () => {
-    if (!analyzerRef.current || !canvasRef.current) return;
+    if (!analyzerRef.current) {
+      console.warn('Cannot start visualization: analyzerRef.current is null');
+      return;
+    }
     
+    if (!canvasRef.current) {
+      console.warn('Cannot start visualization: canvasRef.current is null');
+      return;
+    }
+    
+    // If we already have an animation running, don't start another one
+    if (animationRef.current) {
+      console.log('Visualization already running, not starting a new one');
+      return;
+    }
+    
+    console.log('Starting visualization animation');
     const bufferLength = analyzerRef.current.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
     
-    if (!ctx) return;
+    if (!ctx) {
+      console.warn('Cannot start visualization: unable to get canvas context');
+      return;
+    }
     
     // Animation function to update the visualization
     const animate = () => {
@@ -189,6 +231,27 @@ export default function Home() {
     }
     
     setIsPlaying(!isPlaying);
+  };
+
+  // Function to skip backward 10 seconds
+  const handleSkipBackward = () => {
+    if (!audioRef.current) return;
+    
+    // Subtract 10 seconds, but ensure we don't go below 0
+    audioRef.current.currentTime = Math.max(0, audioRef.current.currentTime - 10);
+    setAudioTime(formatTimeDisplay(audioRef.current.currentTime));
+  };
+
+  // Function to skip forward 10 seconds
+  const handleSkipForward = () => {
+    if (!audioRef.current) return;
+    
+    // Add 10 seconds, but ensure we don't exceed duration
+    audioRef.current.currentTime = Math.min(
+      audioRef.current.duration, 
+      audioRef.current.currentTime + 10
+    );
+    setAudioTime(formatTimeDisplay(audioRef.current.currentTime));
   };
 
   // Clean up function for audio visualization
@@ -853,8 +916,7 @@ export default function Home() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-  };
-  // Handle audio setup and cleanup
+  };  // Handle audio setup and cleanup
   useEffect(() => {
     if (ttsAudioUrl) {
       // Reset states when a new audio URL is set
@@ -864,6 +926,19 @@ export default function Home() {
       
       // Clean up previous audio context if it exists
       cleanupAudioVisualization();
+      
+      // Add a slight delay before setting up the new audio context
+      // This ensures the audio element has had time to properly initialize
+      const setupTimer = setTimeout(() => {
+        if (audioRef.current && !audioContextRef.current) {
+          setupAudioContext();
+          console.log('Audio context initialized via useEffect');
+        }
+      }, 300);
+      
+      return () => {
+        clearTimeout(setupTimer);
+      };
     }
     
     return () => {
@@ -876,8 +951,7 @@ export default function Home() {
       }
     };
   }, [ttsAudioUrl]);
-  
-  // Setup event listeners for the audio element
+    // Setup event listeners for the audio element
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -887,15 +961,30 @@ export default function Home() {
       if (audioContextRef.current?.state === 'suspended') {
         audioContextRef.current.resume();
       }
+      
+      // Ensure visualization starts when playing
+      if (!animationRef.current) {
+        startVisualization();
+      }
     };
     
     const handlePause = () => setIsPlaying(false);
-    
-    const handleEnded = () => {
+      const handleEnded = () => {
       setIsPlaying(false);
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
+        
+        // Clear the canvas when audio ends
+        if (canvasRef.current) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) {
+            ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+          }
+        }
+        
+        // Reset visualization data
+        setVisualizationData(Array(64).fill(0));
       }
     };
     
@@ -1113,10 +1202,9 @@ export default function Home() {
             </CardContent>
           </Card>
 
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl">
-            <CardHeader>
+          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl">            <CardHeader>
               <CardTitle className="text-xl font-bold text-white flex items-center gap-2">
-                <Wand2 className="h-5 w-5 text-indigo-400" />
+                <Settings className="h-5 w-5 text-indigo-400" />
                 Step 2: Transcription Settings
               </CardTitle>
               <CardDescription className="text-zinc-400">
@@ -1277,10 +1365,9 @@ export default function Home() {
         </div>
         
         {/* Right Panel - Results */}
-        <div className="w-full xl:w-1/2 space-y-6">
-          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl h-full">
-            <CardHeader className="border-b border-zinc-800">
+        <div className="w-full xl:w-1/2 space-y-6">          <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl h-full">            <CardHeader className="border-b border-zinc-800">
               <CardTitle className="text-2xl font-bold text-white flex items-center gap-2">
+                <Wand2 className="h-6 w-6 text-indigo-400" />
                 Transcription Results
                 {transcription && localStorage.getItem("parrot-transcription") === transcription && (
                   <div className="text-xs px-2 py-0.5 bg-indigo-500/20 border border-indigo-500/30 rounded-full text-indigo-300 font-normal">
@@ -1799,6 +1886,12 @@ export default function Home() {
                                   const minutes = Math.floor(audioRef.current.duration / 60);
                                   const seconds = Math.round(audioRef.current.duration % 60);
                                   setAudioDuration(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+                                  
+                                  // Also initialize audio context here to ensure it happens
+                                  // This helps in cases where onLoadedData might not fire reliably
+                                  if (!audioContextRef.current) {
+                                    setupAudioContext();
+                                  }
                                 }
                               }}
                               onLoadedData={() => {
@@ -1809,26 +1902,36 @@ export default function Home() {
                             >
                               Your browser does not support the audio element.
                             </audio>
-                            
-                            {/* Audio Visualizer */}
+                              {/* Audio Visualizer */}
                             <div className="mb-4">                              <canvas 
                                 ref={canvasRef} 
-                                className="w-full h-24 rounded-md bg-zinc-900 border border-zinc-800 shadow-lg"
+                                className="w-full h-24 rounded-md"
                                 width={500}
                                 height={100}
-                                style={{
-                                  boxShadow: "0 4px 12px rgba(99, 102, 241, 0.1)"
-                                }}
                               ></canvas>
                             </div>
-                            
-                            {/* Audio Controls */}
-                            <div className="flex justify-between items-center">
-                              <div className="text-zinc-400 text-sm font-medium">
+                              {/* Audio Controls */}
+                            <div className="flex justify-between items-center">                              <div className="text-zinc-400 text-sm font-medium w-12 text-center">
                                 {audioTime}
                               </div>
                               
-                              <div className="flex justify-center">
+                              <div className="flex justify-center items-center gap-2">
+                                {/* Skip Backward 10s Button */}
+                                <Button
+                                  onClick={handleSkipBackward}
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-full hover:bg-indigo-600/10"
+                                  title="Skip backward 10 seconds"
+                                >
+                                  <span className="sr-only">Skip backward 10 seconds</span>
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-zinc-400">
+                                    <path d="M11 17l-5-5 5-5" />
+                                    <path d="M18 17l-5-5 5-5" />
+                                  </svg>
+                                </Button>
+                                
+                                {/* Play/Pause Button */}
                                 <Button
                                   onClick={handlePlayPause}
                                   variant="outline"
@@ -1851,26 +1954,32 @@ export default function Home() {
                                     </svg>
                                   )}
                                 </Button>
+                                
+                                {/* Skip Forward 10s Button */}
+                                <Button
+                                  onClick={handleSkipForward}
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 rounded-full hover:bg-indigo-600/10"
+                                  title="Skip forward 10 seconds"
+                                >
+                                  <span className="sr-only">Skip forward 10 seconds</span>
+                                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-zinc-400">
+                                    <path d="M6 17l5-5-5-5" />
+                                    <path d="M13 17l5-5-5-5" />
+                                  </svg>                                </Button>
                               </div>
                               
-                              <div className="text-zinc-400 text-sm font-medium">
+                              <div className="text-zinc-400 text-sm font-medium w-12 text-center">
                                 {audioDuration}
                               </div>
                             </div>
                           </div>
                         </div>
                       </div>
-                      
-                      <div className="flex justify-center space-x-4">
+                        <div className="flex justify-between">
                         <Button
-                          onClick={handleDownloadAudio}
-                          variant="outline"
-                          className="border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-2"
-                        >
-                          <Download className="h-4 w-4" />
-                          Download MP3
-                        </Button>
-                          <Button                          onClick={async () => {
+                          onClick={async () => {
                             // Clean up audio visualization before clearing the URL
                             cleanupAudioVisualization();
                             
@@ -1903,8 +2012,23 @@ export default function Home() {
                           variant="outline"
                           className="border-zinc-700 bg-zinc-800 hover:bg-red-900 hover:border-red-800 hover:text-red-200 text-zinc-300 flex items-center gap-2 transition-colors"
                         >
-                          <X className="h-4 w-4" />
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                            <line x1="10" y1="11" x2="10" y2="17"></line>
+                            <line x1="14" y1="11" x2="14" y2="17"></line>
+                          </svg>
                           Clear
+                        </Button>
+                        
+                        <Button
+                          onClick={handleDownloadAudio}
+                          variant="outline"
+                          className="border-zinc-700 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 flex items-center gap-2"
+                        >
+                          <Download className="h-4 w-4" />
+                          Download MP3
                         </Button>
                       </div>
                     </div>
