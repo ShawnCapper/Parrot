@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData();
     const audioFile = formData.get('audio') as File;
     const model = formData.get('model') as string || 'whisper-1';
+    let isChunk = formData.get('isChunk') === 'true'; // Check if this is a pre-processed chunk
 
     if (!audioFile) {
       return NextResponse.json({ error: 'No audio file provided' }, { status: 400 });
@@ -63,8 +64,37 @@ export async function POST(request: NextRequest) {
     const fileSizeMB = buffer.byteLength / (1024 * 1024);
     if (fileSizeMB > 25) {
       return NextResponse.json({ 
-        error: 'File size (${fileSizeMB.toFixed(2)}MB) exceeds the limit of 25MB'
+        error: `File size (${fileSizeMB.toFixed(2)}MB) exceeds the limit of 25MB`
       }, { status: 400 });
+    }
+      // Extract duration from the file name if available (format: *_duration1789.848s*)
+    let audioDurationSeconds: number | null = null;
+    const durationMatch = audioFile.name.match(/_duration([0-9]+(?:\.[0-9]+)?)s/);
+    if (durationMatch && durationMatch[1]) {
+      audioDurationSeconds = parseFloat(durationMatch[1]);
+      console.log(`Found duration in filename: ${audioDurationSeconds}s`);
+    }
+    
+    // Check if this is a chunk (format: *_chunk1of3_*)
+    const isFileChunk = audioFile.name.match(/_chunk([0-9]+)of([0-9]+)_/) !== null;
+    if (isFileChunk) {
+      console.log(`Detected file chunk from filename pattern: ${audioFile.name}`);
+      // Force isChunk to true if the filename indicates it's a chunk, regardless of the form parameter
+      isChunk = true;
+    }
+      // Check duration limits for GPT models if we know the duration
+    // Skip this check if the request is marked as a chunk or using Whisper
+    console.log(`Processing audio: ${audioFile.name}, isChunk: ${isChunk}, model: ${model}, duration: ${audioDurationSeconds || 'unknown'}`);
+    
+    if (audioDurationSeconds && (model === 'gpt-4o' || model === 'gpt-4o-mini')) {
+      console.log(`Checking duration: ${audioDurationSeconds} vs limit: 1500, isChunk: ${isChunk}`);
+      
+      if (!isChunk && audioDurationSeconds > 1500) {
+        console.error(`Audio duration ${audioDurationSeconds} exceeds limit of 1500 seconds for model ${model}`);
+        return NextResponse.json({
+          error: `Audio duration ${audioDurationSeconds} seconds is longer than 1500 seconds which is the maximum for this model`
+        }, { status: 400 });
+      }
     }
 
     // Create a File object that OpenAI's API can use

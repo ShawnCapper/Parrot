@@ -1,7 +1,7 @@
 {
-  "name": "AI Transcription Parrot",
-  "short_name": "ParrotAI",
-  "description": "AI powered audio transcription using OpenAI GPT-4o.",
+  "name": "Parrot",
+  "short_name": "Parrot",
+  "description": "AI text-to-speech and speech-to-text",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",
