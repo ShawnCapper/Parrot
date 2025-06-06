@@ -13,10 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "AI Transcription Parrot", // Updated title
-  description: "AI powered audio transcription using OpenAI GPT-4o.", // Updated description
-  manifest: "/manifest.json", // Added manifest link
-  icons: { // Added icons for PWA
+  title: "Parrot",
+  description: "Text-to-Speech and Speech-to-Text powered by OpenAI",
+  manifest: "/manifest.json",
+  icons: {
     apple: "/icons/icon-192x192.png",
   },
 };
@@ -30,10 +30,10 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {/* Added PWA meta tags */}
-        <meta name="application-name" content="ParrotAI" />
+        <meta name="application-name" content="Parrot" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-        <meta name="apple-mobile-web-app-title" content="ParrotAI" />
+        <meta name="apple-mobile-web-app-title" content="Parrot" />
         <meta name="format-detection" content="telephone=no" />
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="msapplication-config" content="/icons/browserconfig.xml" />
