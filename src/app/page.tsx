@@ -23,6 +23,7 @@ import { splitAudioFileIfNeeded, MAX_GPT_AUDIO_DURATION } from "@/lib/audioSplit
 import { estimateTTSParameters } from "@/lib/ttsEstimator";
 import { saveAudioToStorage, getAudioFromStorage, deleteAudioFromStorage } from "@/lib/audioStorage";
 import { Textarea } from "@/components/ui/textarea";
+import RealtimeConversation from "@/components/realtime-conversation";
 
 export default function Home() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
@@ -33,7 +34,7 @@ export default function Home() {
   const [copied, setCopied] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<string>("gpt-4o-mini");
   const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [mode, setMode] = useState<"speech-to-text" | "text-to-speech">("speech-to-text");
+  const [mode, setMode] = useState<"speech-to-text" | "text-to-speech" | "realtime">("speech-to-text");
   const [prefsLoaded, setPrefsLoaded] = useState<boolean>(false);
   const [processingChunks, setProcessingChunks] = useState<boolean>(false);
   const [chunksProgress, setChunksProgress] = useState<{ processed: number, total: number }>({ processed: 0, total: 0 });
@@ -46,12 +47,14 @@ export default function Home() {
   const [isTokenEstimateExpanded, setIsTokenEstimateExpanded] = useState<boolean>(false);
   const [ttsText, setTtsText] = useState<string>("");
   const [ttsModel, setTtsModel] = useState<string>("tts-1");
-  const [ttsVoice, setTtsVoice] = useState<string>("nova");  const [ttsSpeed, setTtsSpeed] = useState<number>(1.0);
+  const [ttsVoice, setTtsVoice] = useState<string>("nova");
+  const [ttsSpeed, setTtsSpeed] = useState<number>(1.0);
   const [ttsError, setTtsError] = useState<string>("");
   const [ttIsGenerating, setTtIsGenerating] = useState<boolean>(false);
-  const [ttsSuccess, setTtsSuccess] = useState<string>("");  const [ttsAudioUrl, setTtsAudioUrl] = useState<string>("");
-  const [ttsAudioId, setTtsAudioId] = useState<string>("");
-  const [prefsLoadedTTS, setPrefsLoadedTTS] = useState<boolean>(false);  const [ttsEstimate, setTtsEstimate] = useState<{
+  const [ttsSuccess, setTtsSuccess] = useState<string>("");
+  const [ttsAudioUrl, setTtsAudioUrl] = useState<string>("");  const [ttsAudioId, setTtsAudioId] = useState<string>("");
+  const [prefsLoadedTTS, setPrefsLoadedTTS] = useState<boolean>(false);
+  const [ttsEstimate, setTtsEstimate] = useState<{
     characterCount: number;
     wordCount: number;
     estimatedDuration: number;
@@ -68,6 +71,191 @@ export default function Home() {
   const analyzerRef = useRef<AnalyserNode | null>(null);
   const animationRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  
+  // Realtime conversation states
+  const [realtimeMessages, setRealtimeMessages] = useState<Array<{
+    id: string;
+    sender: "user" | "ai";
+    text: string;
+    timestamp: Date;
+  }>>([
+    {
+      id: "welcome-message",
+      sender: "ai",
+      text: "Hello! How can I help you today? Just start speaking and I'll respond in real-time.",
+      timestamp: new Date()
+    }
+  ]);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [isAiResponding, setIsAiResponding] = useState<boolean>(false);
+  const [realtimeError, setRealtimeError] = useState<string>("");
+  
+  // Mock functions for demonstration (to be replaced with actual implementation later)
+  const startRecording = () => {
+    setIsRecording(true);
+    setRealtimeError("");
+    // Animate visualizer as if listening
+    startDemoVisualization("listening");
+  };
+  
+  const stopRecording = async () => {
+    setIsRecording(false);
+    
+    // Stop listening visualization
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    
+    // Add mock user message (would normally come from speech recognition)
+    const mockUserMessage = {
+      id: `user-${Date.now()}`,
+      sender: "user" as const,
+      text: "Can you tell me about the weather today?",
+      timestamp: new Date()
+    };
+    setRealtimeMessages(prev => [...prev, mockUserMessage]);
+    
+    // Simulate AI thinking time
+    setTimeout(() => {
+      // AI starts responding
+      setIsAiResponding(true);
+      startDemoVisualization("responding");
+      
+      // After 3 seconds, add AI response
+      setTimeout(() => {
+        const mockAiResponse = {
+          id: `ai-${Date.now()}`,
+          sender: "ai" as const,
+          text: "I don't have real-time access to current weather data, but I'd be happy to discuss weather patterns or help you understand forecasts if you have specific information you'd like to explore!",
+          timestamp: new Date()
+        };
+        setRealtimeMessages(prev => [...prev, mockAiResponse]);
+        setIsAiResponding(false);
+        
+        // Stop response visualization
+        if (animationRef.current) {
+          cancelAnimationFrame(animationRef.current);
+          animationRef.current = null;
+          setVisualizationData(Array(64).fill(0));
+        }
+      }, 3000);
+    }, 1000);
+  };
+  
+  const cancelRealtimeConversation = () => {
+    setIsRecording(false);
+    setIsAiResponding(false);
+    
+    // Stop any visualization
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+      setVisualizationData(Array(64).fill(0));
+    }
+  };
+  
+  const startNewConversation = () => {
+    setRealtimeMessages([
+      {
+        id: "welcome-message",
+        sender: "ai",
+        text: "Hello! How can I help you today? Just start speaking and I'll respond in real-time.",
+        timestamp: new Date()
+      }
+    ]);
+    cancelRealtimeConversation();
+  };
+  
+  // Demo visualization that simulates microphone input or AI response
+  const startDemoVisualization = (mode: "listening" | "responding") => {
+    // Stop any existing animation
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    
+    // Create a new animation based on mode
+    let baseAmplitude = mode === "listening" ? 0.3 : 0.7; // AI response is louder
+    let frequencies = new Uint8Array(64);
+    
+    const animate = () => {
+      animationRef.current = requestAnimationFrame(animate);
+      
+      // Generate random data that resembles audio frequencies
+      for (let i = 0; i < frequencies.length; i++) {
+        // Center frequencies are louder
+        const distanceFromCenter = Math.abs(i - frequencies.length / 2) / (frequencies.length / 2);
+        const amplitude = baseAmplitude * (1 - distanceFromCenter * 0.8);
+        
+        // Add random variation plus a slow wave
+        frequencies[i] = Math.min(255, Math.max(0, 
+          50 + 
+          amplitude * 200 * Math.random() + 
+          20 * Math.sin(Date.now() / 500 + i / 5)
+        ));
+      }
+      
+      // Update visualization
+      setVisualizationData([...frequencies]);
+      
+      // If canvas is available, draw on it too
+      if (canvasRef.current) {
+        const ctx = canvasRef.current.getContext('2d');
+        if (ctx) {
+          const canvas = canvasRef.current;
+          
+          // Clear canvas
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Set bar width and spacing
+          const barWidth = (canvas.width / frequencies.length) * 1.75;
+          let barHeight;
+          let x = 0;
+          
+          // Calculate the center y-position of the canvas
+          const centerY = canvas.height / 2;
+          
+          // Draw bars
+          for (let i = 0; i < frequencies.length; i++) {
+            // Scale the data to fit half the canvas height
+            barHeight = (frequencies[i] / 255) * (canvas.height / 2);
+            
+            // Create gradient for top and bottom parts
+            const gradientTop = ctx.createLinearGradient(0, centerY - barHeight, 0, centerY);
+            const gradientBottom = ctx.createLinearGradient(0, centerY, 0, centerY + barHeight);
+            
+            if (mode === "listening") {
+              // Green for listening
+              gradientTop.addColorStop(0, '#34d399'); // Green-500
+              gradientTop.addColorStop(1, '#10b981'); // Green-600
+              gradientBottom.addColorStop(0, '#10b981'); // Green-600
+              gradientBottom.addColorStop(1, '#34d399'); // Green-500
+            } else {
+              // Indigo for AI responding (same as text-to-speech)
+              gradientTop.addColorStop(0, '#6366f1'); // Indigo-500
+              gradientTop.addColorStop(1, '#4f46e5'); // Indigo-600
+              gradientBottom.addColorStop(0, '#4f46e5'); // Indigo-600
+              gradientBottom.addColorStop(1, '#6366f1'); // Indigo-500
+            }
+            
+            // Draw top bar (extends upward from center)
+            ctx.fillStyle = gradientTop;
+            ctx.fillRect(x, centerY - barHeight, barWidth, barHeight);
+            
+            // Draw bottom bar (extends downward from center)
+            ctx.fillStyle = gradientBottom;
+            ctx.fillRect(x, centerY, barWidth, barHeight);
+            
+            // Add spacing between bars
+            x += barWidth + 1;
+          }
+        }
+      }
+    };
+    
+    animate();
+  };
 
   // Helper functions for audio visualization
   const formatTimeDisplay = (time: number): string => {
@@ -277,10 +465,9 @@ export default function Home() {
       setSelectedModel(savedModel);
       setPrefsLoaded(true);
     }
-    
-    // Load saved mode preference
+      // Load saved mode preference
     const savedMode = localStorage.getItem("parrot-mode");
-    if (savedMode === "speech-to-text" || savedMode === "text-to-speech") {
+    if (savedMode === "speech-to-text" || savedMode === "text-to-speech" || savedMode === "realtime") {
       setMode(savedMode);
       setPrefsLoaded(true);
     }
@@ -310,10 +497,8 @@ export default function Home() {
           model: modelToUse
         });
       });
-    }
-
-    // Hide the preferences loaded notification after 3 seconds
-    if (savedModel || (savedMode === "speech-to-text" || savedMode === "text-to-speech")) {
+    }    // Hide the preferences loaded notification after 3 seconds
+    if (savedModel || (savedMode === "speech-to-text" || savedMode === "text-to-speech" || savedMode === "realtime")) {
       setTimeout(() => setPrefsLoaded(false), 3000);
     }
   }, []);
@@ -322,7 +507,7 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("parrot-selected-model", selectedModel);
   }, [selectedModel]);
-    // Save mode preference when it changes
+  // Save mode preference when it changes
   useEffect(() => {
     localStorage.setItem("parrot-mode", mode);
   }, [mode]);
@@ -331,6 +516,27 @@ export default function Home() {
   useEffect(() => {
     localStorage.setItem("parrot-token-estimate-expanded", isTokenEstimateExpanded.toString());
   }, [isTokenEstimateExpanded]);
+  
+  // Scroll to bottom effect for realtime chat
+  useEffect(() => {
+    if (mode === "realtime") {
+      const messagesEnd = document.getElementById("messages-end");
+      if (messagesEnd) {
+        messagesEnd.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+  }, [realtimeMessages, mode]);
+
+  // Scroll to bottom effect for realtime chat
+  useEffect(() => {
+    if (mode === "realtime") {
+      const messagesEnd = document.getElementById("messages-end");
+      if (messagesEnd) {
+        messagesEnd.scrollIntoView({ behavior: "smooth" });
+      }
+    }
+  }, [realtimeMessages, mode]);
+  
   // useEffect for loading TTS preferences
   useEffect(() => {
     // Load saved TTS settings
@@ -1036,12 +1242,10 @@ export default function Home() {
           <div className="hidden sm:flex items-center">
             <InstallPWA />
           </div>
-          
-          {/* Mode Toggle */}
-          <div className="flex rounded-lg border border-zinc-700 overflow-hidden">
-            <button
+            {/* Mode Toggle */}
+          <div className="flex rounded-lg border border-zinc-700 overflow-hidden">            <button
               onClick={() => setMode("speech-to-text")}
-              className={`px-4 py-2 flex flex-1 justify-center items-center gap-2 text-sm transition-colors ${
+              className={`px-2 py-2 flex flex-1 justify-center items-center gap-1 text-sm whitespace-nowrap transition-colors ${
                 mode === "speech-to-text"
                   ? "bg-indigo-600 text-white"
                   : "bg-zinc-800/70 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300"
@@ -1052,7 +1256,7 @@ export default function Home() {
             </button>
             <button
               onClick={() => setMode("text-to-speech")}
-              className={`px-4 py-2 flex flex-1 justify-center items-center gap-2 text-sm transition-colors ${
+              className={`px-2 py-2 flex flex-1 justify-center items-center gap-1 text-sm whitespace-nowrap transition-colors ${
                 mode === "text-to-speech"
                   ? "bg-indigo-600 text-white"
                   : "bg-zinc-800/70 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300"
@@ -1061,11 +1265,31 @@ export default function Home() {
               <Volume2 className="w-4 h-4" />
               <span>Text-to-Speech</span>
             </button>
+            <button
+              onClick={() => setMode("realtime")}
+              className={`px-2 py-2 flex flex-1 justify-center items-center gap-1 text-sm whitespace-nowrap transition-colors ${
+                mode === "realtime"
+                  ? "bg-indigo-600 text-white"
+                  : "bg-zinc-800/70 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-300"
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="w-4 h-4">
+                <path d="M12 8c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5Z"></path>
+                <path d="M12 2v2"></path>
+                <path d="M12 20v2"></path>
+                <path d="m4.93 4.93 1.41 1.41"></path>
+                <path d="m17.66 17.66 1.41 1.41"></path>
+                <path d="M2 12h2"></path>
+                <path d="M20 12h2"></path>
+                <path d="m6.34 17.66-1.41 1.41"></path>
+                <path d="m19.07 4.93-1.41 1.41"></path>
+              </svg>
+              <span>Realtime</span>
+            </button>
           </div>
         </div>
       </header>
-      
-      {/* Main Content */}
+        {/* Main Content */}
       <main className="flex-1 flex flex-col xl:flex-row w-full max-w-7xl mx-auto p-4 gap-6">
         {mode === "speech-to-text" ? (
         <>
@@ -1478,8 +1702,7 @@ export default function Home() {
               </CardFooter>
             )}
           </Card>
-        </div>        </>
-        ) : (
+        </div>        </>        ) : mode === "text-to-speech" ? (
           // Text-to-Speech Mode
           <div className="w-full flex flex-col xl:flex-row gap-6">
             {/* Left Panel - Input Text */}
@@ -1844,7 +2067,8 @@ export default function Home() {
             
             {/* Right Panel - Results */}
             <div className="w-full xl:w-1/2 space-y-6">
-              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl">                <CardHeader className="border-b border-zinc-800">
+              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl">
+                <CardHeader className="border-b border-zinc-800">
                   <CardTitle className="text-2xl font-bold text-white flex items-center gap-2">
                     <Headphones className="h-6 w-6 text-indigo-400" />
                     Audio Output
@@ -1871,10 +2095,12 @@ export default function Home() {
                       <div className="text-zinc-500">Generating speech...</div>
                     </div>
                   ) : ttsAudioUrl ? (
-                    <div className="space-y-6">                      <div className="flex items-center justify-center p-6">
+                    <div className="space-y-6">
+                      <div className="flex items-center justify-center p-6">
                         <div className="w-full max-w-md">
                           <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-4">
-                            {/* Hidden audio element for handling playback */}                            <audio
+                            {/* Hidden audio element for handling playback */}
+                            <audio
                               ref={audioRef}
                               className="hidden"
                               autoPlay={false}
@@ -1901,17 +2127,17 @@ export default function Home() {
                               }}
                             >
                               Your browser does not support the audio element.
-                            </audio>
-                              {/* Audio Visualizer */}
-                            <div className="mb-4">                              <canvas 
+                            </audio>                            {/* Audio Visualizer */}
+                            <div className="mb-4">
+                              <canvas 
                                 ref={canvasRef} 
                                 className="w-full h-24 rounded-md"
                                 width={500}
                                 height={100}
                               ></canvas>
-                            </div>
-                              {/* Audio Controls */}
-                            <div className="flex justify-between items-center">                              <div className="text-zinc-400 text-sm font-medium w-12 text-center">
+                            </div>                            {/* Audio Controls */}                            
+                            <div className="flex justify-between items-center">
+                              <div className="text-zinc-400 text-sm font-medium w-12 text-center">
                                 {audioTime}
                               </div>
                               
@@ -1967,7 +2193,8 @@ export default function Home() {
                                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 text-zinc-400">
                                     <path d="M6 17l5-5-5-5" />
                                     <path d="M13 17l5-5-5-5" />
-                                  </svg>                                </Button>
+                                  </svg>                                
+                                </Button>
                               </div>
                               
                               <div className="text-zinc-400 text-sm font-medium w-12 text-center">
@@ -1977,7 +2204,7 @@ export default function Home() {
                           </div>
                         </div>
                       </div>
-                        <div className="flex justify-between">
+                      <div className="flex justify-between px-6">
                         <Button
                           onClick={async () => {
                             // Clean up audio visualization before clearing the URL
@@ -2033,7 +2260,7 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center justify-center py-16 text-center p-6 text-zinc-500 border-2 border-dashed border-zinc-800 rounded-lg">
+                    <div className="flex flex-col items-center justify-center py-16 text-center p-6 text-zinc-500 border-2 border-dashed border-zinc-800 rounded-lg">                      
                       <Headphones className="h-10 w-10 text-zinc-700 mb-3" />
                       <div className="mb-2 text-zinc-400">No audio generated yet</div>
                       <div className="text-sm max-w-md">Enter your text, select a voice and model, then click "Generate Speech" to create audio</div>
@@ -2043,7 +2270,237 @@ export default function Home() {
               </Card>
             </div>
           </div>
-        )}
+        ) : (          // Realtime Mode
+          <div className="w-full flex flex-col xl:flex-row gap-6">
+            {/* Main Panel - Realtime Chat */}
+            <div className="w-full xl:w-2/3 space-y-6">
+              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl h-full">
+                <CardHeader className="border-b border-zinc-800">
+                  <CardTitle className="text-2xl font-bold text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6 text-indigo-400">
+                      <path d="M12 8c-2.76 0-5 2.24-5 5s2.24 5 5 5 5-2.24 5-5-2.24-5-5-5Z"></path>
+                      <path d="M12 2v2"></path>
+                      <path d="M12 20v2"></path>
+                      <path d="m4.93 4.93 1.41 1.41"></path>
+                      <path d="m17.66 17.66 1.41 1.41"></path>
+                      <path d="M2 12h2"></path>
+                      <path d="M20 12h2"></path>
+                      <path d="m6.34 17.66-1.41 1.41"></path>
+                      <path d="m19.07 4.93-1.41 1.41"></path>
+                    </svg>
+                    Realtime AI Conversation
+                  </CardTitle>
+                  <CardDescription className="text-zinc-400">
+                    Have a natural conversation with an AI using your voice
+                  </CardDescription>
+                  {realtimeError && (
+                    <div className="mt-3 px-4 py-2 bg-red-900/30 border border-red-800 rounded-md text-sm text-red-200 flex items-center">
+                      <div className="w-2 h-2 rounded-full bg-red-400 mr-2"></div>
+                      {realtimeError}
+                    </div>
+                  )}
+                </CardHeader>
+                <CardContent className="h-[500px] flex flex-col">
+                  {/* Chat Messages Area */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {realtimeMessages.map((message) => (
+                      <div 
+                        key={message.id}
+                        className={`${
+                          message.sender === "ai" 
+                            ? "bg-zinc-800/50 border border-zinc-700" 
+                            : "bg-indigo-900/30 border border-indigo-700"
+                        } rounded-lg p-4 ${
+                          message.sender === "ai" ? "max-w-[80%]" : "max-w-[80%] ml-auto"
+                        }`}
+                      >
+                        <div 
+                          className={`text-xs mb-1 ${
+                            message.sender === "ai" ? "text-indigo-400" : "text-indigo-300"
+                          }`}
+                        >
+                          {message.sender === "ai" ? "AI Assistant" : "You"}
+                        </div>
+                        <div className="text-zinc-200">
+                          {message.text}
+                        </div>
+                        <div className="text-right text-xs text-zinc-500 mt-1">
+                          {message.timestamp.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {/* Scrolls to bottom when messages update */}
+                    <div id="messages-end" />
+                  </div>
+                  
+                  {/* Audio Visualizer */}
+                  <div className="h-32 p-4 border-t border-zinc-800">
+                    <div className="bg-zinc-800 border border-zinc-700 rounded-lg p-3 h-full">
+                      <div className="flex justify-between items-center">
+                        <div className="text-zinc-400 text-sm flex items-center gap-2">
+                          {isRecording && (
+                            <>
+                              <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                              <span>Listening...</span>
+                            </>
+                          )}
+                          {isAiResponding && (
+                            <>
+                              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></div>
+                              <span>AI is responding...</span>
+                            </>
+                          )}
+                          {!isRecording && !isAiResponding && (
+                            <>
+                              <div className="w-2 h-2 rounded-full bg-zinc-400"></div>
+                              <span>Press mic to start</span>
+                            </>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={isRecording ? stopRecording : startRecording}
+                            disabled={isAiResponding}
+                            variant="outline"
+                            size="sm"
+                            className={`h-8 border-zinc-700 ${
+                              isRecording 
+                                ? "bg-green-900/50 border-green-700 text-green-400 hover:bg-green-800" 
+                                : "bg-zinc-800 hover:bg-zinc-700"
+                            } ${isAiResponding ? "opacity-50 cursor-not-allowed" : ""}`}
+                          >
+                            <Mic className={`h-4 w-4 ${isRecording ? "text-green-400" : "text-indigo-400"}`} />
+                          </Button>
+                          <Button
+                            onClick={cancelRealtimeConversation}
+                            disabled={!isRecording && !isAiResponding}
+                            variant="outline"
+                            size="sm"
+                            className={`h-8 border-zinc-700 bg-zinc-800 hover:bg-zinc-700 ${
+                              !isRecording && !isAiResponding ? "opacity-50 cursor-not-allowed" : ""
+                            }`}
+                          >
+                            <X className="h-4 w-4 text-zinc-400" />
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Audio Waveform */}
+                      <canvas
+                        ref={canvasRef}
+                        className="w-full h-14 mt-2"
+                        width={500}
+                        height={60}
+                      ></canvas>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+            
+            {/* Right Panel - Settings */}
+            <div className="w-full xl:w-1/3 space-y-6">
+              <Card className="bg-zinc-900/50 border-zinc-800 backdrop-blur-sm shadow-xl">
+                <CardHeader>
+                  <CardTitle className="text-xl font-bold text-white flex items-center gap-2">
+                    <Settings className="h-5 w-5 text-indigo-400" />
+                    Conversation Settings
+                  </CardTitle>
+                  <CardDescription className="text-zinc-400">
+                    Customize your realtime conversation experience
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  <div className="space-y-4">
+                    <Label className="text-white text-base font-medium">AI Voice</Label>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'].map((voice) => (
+                        <div 
+                          key={voice}
+                          className={`rounded-lg border p-3 ${ttsVoice === voice 
+                            ? "border-indigo-500 bg-indigo-500/10" 
+                            : "border-zinc-700 bg-zinc-800/50"} 
+                            transition-all hover:border-indigo-400/70 cursor-pointer`}
+                          onClick={() => {
+                            setTtsVoice(voice);
+                            localStorage.setItem("parrot-tts-voice", voice);
+                          }}
+                        >
+                          <div className="flex flex-col items-center gap-2">
+                            <Mic className={`h-5 w-5 ${ttsVoice === voice ? "text-indigo-400" : "text-zinc-500"}`} />
+                            <span className={ttsVoice === voice ? "text-indigo-300" : "text-zinc-400"} style={{textTransform: 'capitalize'}}>
+                              {voice}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center">
+                      <Label className="text-white text-base font-medium">Response Speed</Label>
+                      <span className="text-sm text-zinc-400">{ttsSpeed}x</span>
+                    </div>
+                    
+                    <div className="flex items-center gap-4">
+                      <Snail className="h-4 w-4 text-zinc-500" />
+                      <input
+                        type="range"
+                        min="0.5"
+                        max="2.0"
+                        step="0.1"
+                        value={ttsSpeed}
+                        onChange={(e) => {
+                          const newSpeed = parseFloat(e.target.value);
+                          setTtsSpeed(newSpeed);
+                          localStorage.setItem("parrot-tts-speed", newSpeed.toString());
+                        }}
+                        className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+                      />
+                      <Rabbit className="h-4 w-4 text-zinc-500" />
+                    </div>
+                  </div>
+                  
+                  <div className="pt-4 border-t border-zinc-800">
+                    <Label className="text-white text-base font-medium mb-3 block">Smart Features</Label>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <BookOpenText className="h-4 w-4 text-indigo-400" />
+                          <span className="text-sm text-zinc-300">Memory & Context</span>
+                        </div>
+                        <div className="w-8 h-4 rounded-full bg-indigo-500/30 border border-indigo-500/50"></div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                            <line x1="9" y1="20" x2="15" y2="20"></line>
+                            <line x1="12" y1="4" x2="12" y2="20"></line>
+                          </svg>
+                          <span className="text-sm text-zinc-300">Auto Punctuation</span>
+                        </div>
+                        <div className="w-8 h-4 rounded-full bg-indigo-500 border border-indigo-600"></div>
+                      </div>
+                    </div>
+                    
+                    <div className="mt-6 text-center">
+                      <Button 
+                        onClick={startNewConversation}
+                        className="w-full bg-indigo-600 hover:bg-indigo-500 text-white border-0 h-10 font-medium transition-all"
+                      >
+                        Start New Conversation
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>        )}
       </main>
     </div>
   );
